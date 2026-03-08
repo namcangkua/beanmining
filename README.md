@@ -10,9 +10,12 @@ This tool automates mining rounds and claim management to reduce manual interact
 Clone the repository and install the required dependencies.
 
 ```bash
+pkg install nodejs
+pkg install git
 git clone https://github.com/namcangkua/beanmining.git
-cd minebean-bot
+cd beanmining
 npm install
+node minebean-bot.js
 ```
 
 ---
