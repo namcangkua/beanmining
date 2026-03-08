@@ -1,8 +1,8 @@
 // ============================================================
 //  MineBean Auto Bot
 //  Chain  : Base Mainnet (8453)
-//  Jalankan setup dulu: node minebean-bot.js --setup
-//  Lalu jalankan bot  : node minebean-bot.js
+//  Setup  : node minebean-bot.js --setup
+//  Bot    : node minebean-bot.js
 // ============================================================
 
 const { ethers } = require("ethers");
@@ -81,78 +81,49 @@ function parseBlockInput(input) {
   return result;
 }
 
-// ── Prompt Helpers ────────────────────────────────────────────
-function prompt(rl, question) {
-  return new Promise((resolve) => rl.question(question, resolve));
+// ── Single prompt helper ──────────────────────────────────────
+function ask(rl, question) {
+  return new Promise((resolve) => rl.question(question, (ans) => resolve(ans.trim())));
 }
 
-function promptHidden(question) {
-  return new Promise((resolve) => {
-    process.stdout.write(question);
-    let key = "";
-
-    const onData = (char) => {
-      char = char.toString();
-      if (char === "\n" || char === "\r" || char === "\u0004") {
-        process.stdout.write("\n");
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        process.stdin.removeListener("data", onData);
-        resolve(key);
-      } else if (char === "\u0003") {
-        process.exit();
-      } else if (char === "\u007f") {
-        if (key.length > 0) key = key.slice(0, -1);
-      } else {
-        key += char;
-        process.stdout.write("*");
-      }
-    };
-
-    try {
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      process.stdin.on("data", onData);
-    } catch {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      rl.question(question, (ans) => { rl.close(); resolve(ans.trim()); });
-    }
-  });
-}
-
-// ── Setup — simpan ke config.json ────────────────────────────
+// ── Setup ─────────────────────────────────────────────────────
 async function runSetup() {
   console.log("╔═══════════════════════════════════════════════╗");
   console.log("║           🫘  MineBean Auto Bot               ║");
   console.log("║              Setup Konfigurasi                ║");
   console.log("╚═══════════════════════════════════════════════╝");
   console.log("");
+  console.log("⚠️   Private key akan tampil saat diketik (tidak tersembunyi).");
+  console.log("    Pastikan tidak ada orang yang melihat layar kamu.");
+  console.log("");
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   // ── 1. Private Key ────────────────────────────────────────
-  const privateKey = await promptHidden("🔑  Private key wallet kamu: ");
-  if (!privateKey || privateKey.length < 10) {
-    console.error("❌  Private key tidak valid!");
-    process.exit(1);
-  }
-
   let walletAddress;
-  try {
-    const w = new ethers.Wallet(privateKey.trim());
-    walletAddress = w.address;
-    console.log(`✅  Wallet: ${walletAddress}`);
-  } catch {
-    console.error("❌  Private key tidak valid!");
-    process.exit(1);
+  let privateKey;
+  while (true) {
+    privateKey = await ask(rl, "🔑  Private key wallet kamu: ");
+    if (!privateKey || privateKey.length < 10) {
+      console.log("    ⚠️  Private key terlalu pendek."); continue;
+    }
+    try {
+      const w = new ethers.Wallet(privateKey);
+      walletAddress = w.address;
+      console.log(`    ✅  Wallet: ${walletAddress}`);
+      break;
+    } catch {
+      console.log("    ⚠️  Private key tidak valid, coba lagi.");
+    }
   }
 
   console.log("");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   // ── 2. Jumlah block per round ─────────────────────────────
   let numBlocks;
   while (true) {
-    const input = await prompt(rl, "🎲  Jumlah block per round (1-25) [default: 5]: ");
-    const val   = input.trim() === "" ? 5 : parseInt(input.trim());
+    const input = await ask(rl, "🎲  Jumlah block per round (1-25) [default: 5]: ");
+    const val   = input === "" ? 5 : parseInt(input);
     if (!isNaN(val) && val >= 1 && val <= 25) { numBlocks = val; break; }
     console.log("    ⚠️  Masukkan angka antara 1 sampai 25.");
   }
@@ -160,8 +131,8 @@ async function runSetup() {
   // ── 3. Fixed blocks ───────────────────────────────────────
   let fixedBlocks = [];
   while (true) {
-    const input = await prompt(rl, "📌  Block yang selalu dipilih (pisah koma, misal: 3,16) [kosong = semua random]: ");
-    if (input.trim() === "") break;
+    const input = await ask(rl, "📌  Block yang selalu dipilih (pisah koma, misal: 3,16) [kosong = semua random]: ");
+    if (input === "") break;
     const parsed = parseBlockInput(input);
     if (!parsed) { console.log("    ⚠️  Format tidak valid. Contoh: 3,16"); continue; }
     if (parsed.length >= numBlocks) { console.log(`    ⚠️  Jumlah fixed block tidak boleh >= ${numBlocks}.`); continue; }
@@ -172,8 +143,8 @@ async function runSetup() {
   // ── 4. ETH per block ──────────────────────────────────────
   let ethPerBlockStr;
   while (true) {
-    const input = await prompt(rl, "💰  ETH per block [default: 0.00001]: ");
-    const val   = input.trim() === "" ? "0.00001" : input.trim();
+    const input = await ask(rl, "💰  ETH per block [default: 0.00001]: ");
+    const val   = input === "" ? "0.00001" : input;
     try {
       const parsed = ethers.parseEther(val);
       if (parsed < ethers.parseEther("0.0000025")) { console.log("    ⚠️  Minimum 0.0000025 ETH per block."); continue; }
@@ -185,8 +156,8 @@ async function runSetup() {
   // ── 5. Claim threshold ────────────────────────────────────
   let claimThresholdStr;
   while (true) {
-    const input = await prompt(rl, "🎯  Auto-claim jika pending ETH >= [default: 0.0005]: ");
-    const val   = input.trim() === "" ? "0.0005" : input.trim();
+    const input = await ask(rl, "🎯  Auto-claim jika pending ETH >= [default: 0.0005]: ");
+    const val   = input === "" ? "0.0005" : input;
     try {
       const parsed = ethers.parseEther(val);
       if (parsed <= 0n) throw new Error();
@@ -195,10 +166,9 @@ async function runSetup() {
     } catch { console.log("    ⚠️  Format tidak valid. Contoh: 0.0005"); }
   }
 
-  rl.close();
-
   const totalPerRound = ethers.formatEther(ethers.parseEther(ethPerBlockStr) * BigInt(numBlocks));
   const fixedUi       = fixedBlocks.length > 0 ? fixedBlocks.map(b => `#${b + 1}`).join(", ") : "semua random";
+  const randomCount   = numBlocks - fixedBlocks.length;
 
   // ── Konfirmasi ────────────────────────────────────────────
   console.log("");
@@ -206,24 +176,24 @@ async function runSetup() {
   console.log(`│  Wallet    : ${walletAddress.slice(0, 22)}...`);
   console.log(`│  Block/rnd : ${numBlocks} block`);
   console.log(`│  Fixed     : ${fixedUi}`);
+  console.log(`│  Random    : ${randomCount} block sisanya`);
   console.log(`│  ETH/block : ${ethPerBlockStr} ETH`);
   console.log(`│  ETH/round : ${totalPerRound} ETH`);
   console.log(`│  AutoClaim : >= ${claimThresholdStr} ETH`);
   console.log("└─────────────────────────────────────────────┘");
   console.log("");
 
-  const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const confirm = await prompt(rl2, "💾  Simpan config dan jalankan bot? (y/n): ");
-  rl2.close();
+  const confirm = await ask(rl, "💾  Simpan config? (y/n): ");
+  rl.close();
 
-  if (confirm.trim().toLowerCase() !== "y") {
+  if (confirm.toLowerCase() !== "y") {
     console.log("❌  Dibatalkan.");
     process.exit(0);
   }
 
-  // Simpan ke config.json
+  // Simpan config.json
   const config = {
-    privateKey: privateKey.trim(),
+    privateKey,
     numBlocks,
     fixedBlocks,
     ethPerBlock: ethPerBlockStr,
@@ -231,14 +201,14 @@ async function runSetup() {
   };
 
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-  console.log(`✅  Config disimpan ke config.json`);
   console.log("");
-  console.log("Untuk jalankan bot:");
+  console.log("✅  Config disimpan!");
+  console.log("");
+  console.log("Jalankan bot:");
   console.log("  node minebean-bot.js");
   console.log("");
-  console.log("Untuk jalankan di background:");
-  console.log("  termux-wake-lock");
-  console.log("  nohup node minebean-bot.js > bot.log 2>&1 &");
+  console.log("Jalankan di background:");
+  console.log("  termux-wake-lock && nohup node minebean-bot.js > bot.log 2>&1 &");
 }
 
 // ── Load config ───────────────────────────────────────────────
