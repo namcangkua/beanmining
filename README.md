@@ -8,7 +8,7 @@ Setup interaktif — tidak perlu config manual.
 
 Setup : 
 
-git clone https://github.com/yourrepo/minebean-bot
+git clone https://github.com/namcangkua/beanmining
 cd minebean-bot
 npm install
 node minebean-bot.js
