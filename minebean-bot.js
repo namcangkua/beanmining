@@ -1,12 +1,14 @@
 // ============================================================
 //  MineBean Auto Bot
 //  Chain  : Base Mainnet (8453)
-//  Setup  : Interaktif — private key, jumlah block, ETH/block
-//  AutoClaim ETH jika pending >= threshold
+//  Jalankan setup dulu: node minebean-bot.js --setup
+//  Lalu jalankan bot  : node minebean-bot.js
 // ============================================================
 
 const { ethers } = require("ethers");
 const readline   = require("readline");
+const fs         = require("fs");
+const path       = require("path");
 
 // ── Constants ─────────────────────────────────────────────────
 const GRID_ABI = [
@@ -20,6 +22,7 @@ const RPC_URL       = "https://mainnet.base.org";
 const POLL_INTERVAL = 3000;
 const MAX_RETRY     = 5;
 const RETRY_DELAY   = 2000;
+const CONFIG_FILE   = path.join(__dirname, "config.json");
 
 // ── Helpers ───────────────────────────────────────────────────
 function log(msg) {
@@ -31,8 +34,8 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function pickRandomBlocks(count) {
-  const pool = Array.from({ length: 25 }, (_, i) => i);
+function pickRandomBlocks(count, exclude = []) {
+  const pool = Array.from({ length: 25 }, (_, i) => i).filter(i => !exclude.includes(i));
   const chosen = [];
   while (chosen.length < count) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -64,6 +67,18 @@ async function fetchCurrentRound(address) {
     log(`⚠️  Gagal fetch round (${e.message}), skip...`);
     return null;
   }
+}
+
+function parseBlockInput(input) {
+  const parts = input.split(",").map(s => s.trim()).filter(Boolean);
+  const result = [];
+  for (const p of parts) {
+    const n = parseInt(p);
+    if (isNaN(n) || n < 1 || n > 25) return null;
+    const idx = n - 1;
+    if (!result.includes(idx)) result.push(idx);
+  }
+  return result;
 }
 
 // ── Prompt Helpers ────────────────────────────────────────────
@@ -105,11 +120,11 @@ function promptHidden(question) {
   });
 }
 
-// ── Interactive Setup ─────────────────────────────────────────
-async function setup() {
+// ── Setup — simpan ke config.json ────────────────────────────
+async function runSetup() {
   console.log("╔═══════════════════════════════════════════════╗");
   console.log("║           🫘  MineBean Auto Bot               ║");
-  console.log("║         Base Mainnet — minebean.com           ║");
+  console.log("║              Setup Konfigurasi                ║");
   console.log("╚═══════════════════════════════════════════════╝");
   console.log("");
 
@@ -120,11 +135,11 @@ async function setup() {
     process.exit(1);
   }
 
-  let wallet;
+  let walletAddress;
   try {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    wallet = new ethers.Wallet(privateKey.trim(), provider);
-    console.log(`✅  Wallet: ${wallet.address}`);
+    const w = new ethers.Wallet(privateKey.trim());
+    walletAddress = w.address;
+    console.log(`✅  Wallet: ${walletAddress}`);
   } catch {
     console.error("❌  Private key tidak valid!");
     process.exit(1);
@@ -142,50 +157,63 @@ async function setup() {
     console.log("    ⚠️  Masukkan angka antara 1 sampai 25.");
   }
 
-  // ── 3. ETH per block ──────────────────────────────────────
-  let ethPerBlock;
+  // ── 3. Fixed blocks ───────────────────────────────────────
+  let fixedBlocks = [];
+  while (true) {
+    const input = await prompt(rl, "📌  Block yang selalu dipilih (pisah koma, misal: 3,16) [kosong = semua random]: ");
+    if (input.trim() === "") break;
+    const parsed = parseBlockInput(input);
+    if (!parsed) { console.log("    ⚠️  Format tidak valid. Contoh: 3,16"); continue; }
+    if (parsed.length >= numBlocks) { console.log(`    ⚠️  Jumlah fixed block tidak boleh >= ${numBlocks}.`); continue; }
+    fixedBlocks = parsed;
+    break;
+  }
+
+  // ── 4. ETH per block ──────────────────────────────────────
+  let ethPerBlockStr;
   while (true) {
     const input = await prompt(rl, "💰  ETH per block [default: 0.00001]: ");
     const val   = input.trim() === "" ? "0.00001" : input.trim();
     try {
-      ethPerBlock = ethers.parseEther(val);
-      if (ethPerBlock < ethers.parseEther("0.0000025")) {
-        console.log("    ⚠️  Minimum 0.0000025 ETH per block.");
-        continue;
-      }
+      const parsed = ethers.parseEther(val);
+      if (parsed < ethers.parseEther("0.0000025")) { console.log("    ⚠️  Minimum 0.0000025 ETH per block."); continue; }
+      ethPerBlockStr = val;
       break;
     } catch { console.log("    ⚠️  Format tidak valid. Contoh: 0.00001"); }
   }
 
-  // ── 4. Claim threshold ────────────────────────────────────
-  let claimThreshold;
+  // ── 5. Claim threshold ────────────────────────────────────
+  let claimThresholdStr;
   while (true) {
     const input = await prompt(rl, "🎯  Auto-claim jika pending ETH >= [default: 0.0005]: ");
     const val   = input.trim() === "" ? "0.0005" : input.trim();
     try {
-      claimThreshold = ethers.parseEther(val);
-      if (claimThreshold <= 0n) throw new Error();
+      const parsed = ethers.parseEther(val);
+      if (parsed <= 0n) throw new Error();
+      claimThresholdStr = val;
       break;
     } catch { console.log("    ⚠️  Format tidak valid. Contoh: 0.0005"); }
   }
 
   rl.close();
 
-  const totalPerRound = ethPerBlock * BigInt(numBlocks);
+  const totalPerRound = ethers.formatEther(ethers.parseEther(ethPerBlockStr) * BigInt(numBlocks));
+  const fixedUi       = fixedBlocks.length > 0 ? fixedBlocks.map(b => `#${b + 1}`).join(", ") : "semua random";
 
   // ── Konfirmasi ────────────────────────────────────────────
   console.log("");
   console.log("┌─────────────── KONFIRMASI ──────────────────┐");
-  console.log(`│  Wallet    : ${wallet.address.slice(0, 22)}...`);
-  console.log(`│  Block/rnd : ${numBlocks} block (random)`);
-  console.log(`│  ETH/block : ${ethers.formatEther(ethPerBlock)} ETH`);
-  console.log(`│  ETH/round : ${ethers.formatEther(totalPerRound)} ETH`);
-  console.log(`│  AutoClaim : >= ${ethers.formatEther(claimThreshold)} ETH`);
+  console.log(`│  Wallet    : ${walletAddress.slice(0, 22)}...`);
+  console.log(`│  Block/rnd : ${numBlocks} block`);
+  console.log(`│  Fixed     : ${fixedUi}`);
+  console.log(`│  ETH/block : ${ethPerBlockStr} ETH`);
+  console.log(`│  ETH/round : ${totalPerRound} ETH`);
+  console.log(`│  AutoClaim : >= ${claimThresholdStr} ETH`);
   console.log("└─────────────────────────────────────────────┘");
   console.log("");
 
   const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const confirm = await prompt(rl2, "▶️   Jalankan bot? (y/n): ");
+  const confirm = await prompt(rl2, "💾  Simpan config dan jalankan bot? (y/n): ");
   rl2.close();
 
   if (confirm.trim().toLowerCase() !== "y") {
@@ -193,17 +221,63 @@ async function setup() {
     process.exit(0);
   }
 
-  return { privateKey: privateKey.trim(), numBlocks, ethPerBlock, totalPerRound, claimThreshold };
+  // Simpan ke config.json
+  const config = {
+    privateKey: privateKey.trim(),
+    numBlocks,
+    fixedBlocks,
+    ethPerBlock: ethPerBlockStr,
+    claimThreshold: claimThresholdStr,
+  };
+
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  console.log(`✅  Config disimpan ke config.json`);
+  console.log("");
+  console.log("Untuk jalankan bot:");
+  console.log("  node minebean-bot.js");
+  console.log("");
+  console.log("Untuk jalankan di background:");
+  console.log("  termux-wake-lock");
+  console.log("  nohup node minebean-bot.js > bot.log 2>&1 &");
+}
+
+// ── Load config ───────────────────────────────────────────────
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_FILE)) {
+    console.error("❌  Config belum ada! Jalankan setup dulu:");
+    console.error("    node minebean-bot.js --setup");
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+  } catch {
+    console.error("❌  config.json rusak! Jalankan setup ulang:");
+    console.error("    node minebean-bot.js --setup");
+    process.exit(1);
+  }
 }
 
 // ── Main Bot ──────────────────────────────────────────────────
-async function runBot({ privateKey, numBlocks, ethPerBlock, totalPerRound, claimThreshold }) {
+async function runBot() {
+  const cfg = loadConfig();
+
+  const ethPerBlock    = ethers.parseEther(cfg.ethPerBlock);
+  const claimThreshold = ethers.parseEther(cfg.claimThreshold);
+  const totalPerRound  = ethPerBlock * BigInt(cfg.numBlocks);
+  const fixedBlocks    = cfg.fixedBlocks || [];
+  const numBlocks      = cfg.numBlocks;
+
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet   = new ethers.Wallet(privateKey, provider);
+  const wallet   = new ethers.Wallet(cfg.privateKey, provider);
   const contract = new ethers.Contract(GRID_ADDRESS, GRID_ABI, wallet);
 
-  console.log("");
-  log("🫘  Bot berjalan...");
+  const fixedUi = fixedBlocks.length > 0 ? fixedBlocks.map(b => `#${b + 1}`).join(", ") : "semua random";
+
+  log("🫘  MineBean Bot berjalan...");
+  log(`📬  Wallet  : ${wallet.address}`);
+  log(`🎲  Block   : ${numBlocks}/round | Fixed: ${fixedUi}`);
+  log(`💰  Deploy  : ${ethers.formatEther(totalPerRound)} ETH/round`);
+  log(`🎯  Claim   : >= ${cfg.claimThreshold} ETH`);
   log("─".repeat(55));
 
   let lastRoundId      = null;
@@ -270,8 +344,10 @@ async function runBot({ privateKey, numBlocks, ethPerBlock, totalPerRound, claim
           process.exit(1);
         }
 
-        const blockIds = pickRandomBlocks(numBlocks);
-        const uiBlocks = blockIds.map(b => `UI#${b + 1}`);
+        const randomCount  = numBlocks - fixedBlocks.length;
+        const randomBlocks = randomCount > 0 ? pickRandomBlocks(randomCount, fixedBlocks) : [];
+        const blockIds     = [...fixedBlocks, ...randomBlocks].sort((a, b) => a - b);
+        const uiBlocks     = blockIds.map(b => `#${b + 1}`);
 
         log(`🎲  Blok: [${uiBlocks.join(", ")}]`);
         log(`💸  Deploy ${ethers.formatEther(totalPerRound)} ETH...`);
@@ -307,9 +383,10 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-setup()
-  .then(runBot)
-  .catch((e) => {
-    console.error("Fatal:", e.message);
-    process.exit(1);
-  });
+// ── Entry Point ───────────────────────────────────────────────
+const args = process.argv.slice(2);
+if (args.includes("--setup")) {
+  runSetup().catch((e) => { console.error("Fatal:", e.message); process.exit(1); });
+} else {
+  runBot().catch((e) => { console.error("Fatal:", e.message); process.exit(1); });
+}
