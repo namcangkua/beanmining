@@ -1,27 +1,33 @@
-MineBean Auto 
+# Bean Mining
 
-Auto bot untuk bermain MineBean di Base Mainnet.
-Fitur
-Deploy otomatis setiap round.
-Auto-claim ETH reward jika melebihi threshold
-Setup interaktif — tidak perlu config manual.
+## Overview
 
-Setup : 
+Welcome to the Bean Mining repository! This project aims to...
 
-git clone https://github.com/namcangkua/beanmining
-cd minebean-bot
-npm install
-node minebean-bot.js
-Bot akan meminta:
-Private key wallet kamu (tersembunyi saat diketik)
-Jumlah ETH per block (default: 0.00001)
-Threshold auto-claim (default: 0.0005 ETH)
-Jalankan di Background (Termux)
-termux-wake-lock
-nohup node minebean-bot.js > bot.log 2>&1 &
-tail -f bot.log
-Hentikan bot:
-pkill -f minebean-bot.js
+## Features
+- Feature 1: Description
+- Feature 2: Description
 
-⚠️ Disclaimer
-Gunakan dengan risiko sendiri. Jangan pernah share private key ke siapapun.
+## Installation
+
+To install this project, run:
+
+```bash
+git clone https://github.com/namcangkua/beanmining.git
+cd beanmining
+```
+
+## Usage
+
+To use the project, follow these steps:
+
+1. Step one
+2. Step two
+
+## Contributing
+
+We welcome contributions! Please fork the repository and submit a pull request for any enhancements or bug fixes.
+
+## License
+
+This project is licensed under the MIT License.
